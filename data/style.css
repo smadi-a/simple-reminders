@@ -1,0 +1,8 @@
+/* Missed-reminder rows shown in dark red, per the login/missed-reminders sweep. */
+row.missed-reminder {
+  color: #8b0000;
+}
+
+row.missed-reminder title {
+  color: #8b0000;
+}

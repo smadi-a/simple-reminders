@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Simple Reminders (background)
+Exec=simple-reminders --background
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

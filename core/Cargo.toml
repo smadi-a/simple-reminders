@@ -1,0 +1,13 @@
+[package]
+name = "simple-reminders-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+chrono = { version = "0.4", features = ["clock"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+thiserror = "1.0"
+
+[dev-dependencies]
+tempfile = "3"

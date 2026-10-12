@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Simple Reminders
+Comment=Simple scheduled reminders
+Exec=simple-reminders %U
+Icon=appointment-soon-symbolic
+Terminal=false
+Categories=Utility;
+StartupNotify=true
