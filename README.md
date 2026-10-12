@@ -24,3 +24,9 @@ cargo test
 ```
 
 Runs unit tests for the `core` crate (scheduler, recurrence, db, missed reminders, formatting, sound).
+
+If you'd like the `app` crate (the GTK/libadwaita part) to be compile-verified too:
+
+```sh
+sudo apt install -y libgtk-4-dev libadwaita-1-dev libsqlite3-dev pkg-config
+```
