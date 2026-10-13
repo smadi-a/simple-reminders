@@ -3,6 +3,8 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
+pkill -9 -f simple-reminders || true
+
 cargo build --release
 
 bin_dir="$HOME/.local/bin"
