@@ -43,8 +43,17 @@ pub fn build_application() -> adw::Application {
         // Run the missed-reminders sweep once at startup (covers both "logged out, now
         // logging back in" and "first launch ever") before anything else touches the DB.
         let now = chrono::Local::now().naive_local();
-        if let Err(err) = scheduler::run_missed_sweep(&store, now) {
-            eprintln!("missed-reminder sweep failed: {err}");
+        match scheduler::run_missed_sweep(&store, now) {
+            Ok(missed) => {
+                for occurrence in missed {
+                    let Ok(reminder) = store.get_reminder(occurrence.reminder_id) else { continue };
+                    send_reminder_notification(app, occurrence.reminder_id, &reminder.title, occurrence.due_instant);
+                    if let Some(sound_path) = sound_setting(&store) {
+                        play_sound(&sound_path);
+                    }
+                }
+            }
+            Err(err) => eprintln!("missed-reminder sweep failed: {err}"),
         }
 
         register_reminder_done_action(app, state.clone());
