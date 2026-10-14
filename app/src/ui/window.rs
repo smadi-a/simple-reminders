@@ -4,6 +4,7 @@
 
 use crate::ui::edit_dialog;
 use crate::ui::settings_dialog;
+use gio::prelude::*;
 use gtk::prelude::*;
 use adw::prelude::*;
 use simple_reminders_core::{format::describe_recurrence, scheduler, Reminder, Store};
@@ -60,11 +61,24 @@ impl ReminderWindow {
 
         window.connect_close_request(|window| {
             // Hide, don't destroy: scheduling/notifications must keep working after the
-            // window closes (see the project plan §6) — there is deliberately no quit
-            // action anywhere in this app.
+            // window closes (see the project plan §6) — there is deliberately no action
+            // anywhere in this app that quits the underlying process.
             window.set_visible(false);
             glib::Propagation::Stop
         });
+
+        // Ctrl+Q closes just the window (same as the titlebar close button, via
+        // close_request above) — it must never quit the process, since this same
+        // process keeps running the scheduler/notifications after the window hides.
+        let quit_ui_action = gio::SimpleAction::new("quit-ui", None);
+        {
+            let window = window.clone();
+            quit_ui_action.connect_activate(move |_, _| {
+                window.close();
+            });
+        }
+        window.add_action(&quit_ui_action);
+        app.set_accels_for_action("win.quit-ui", &["<Primary>q"]);
 
         let this = ReminderWindow(Rc::new(Inner {
             window,
