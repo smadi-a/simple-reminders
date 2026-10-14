@@ -6,8 +6,8 @@
 use crate::db::Store;
 use crate::error::Result;
 use crate::missed::{compute_missed, MissedOccurrence};
-use crate::model::{format_datetime, parse_datetime, RecurrenceRule};
-use crate::recurrence::due_instants_between;
+use crate::model::{format_datetime, parse_datetime, Reminder, RecurrenceRule};
+use crate::recurrence::{due_instants_between, next_occurrence_after};
 use chrono::NaiveDateTime;
 
 const LAST_SEEN_AT_KEY: &str = "last_seen_at";
@@ -85,6 +85,32 @@ pub fn mark_done(store: &Store, reminder_id: i64) -> Result<()> {
         | RecurrenceRule::Weekly { .. }
         | RecurrenceRule::MonthlyOnDay { .. } => store.clear_missed(reminder_id),
     }
+}
+
+/// The "auto-arrange by date/time" order: every reminder's id, ascending by its next
+/// occurrence after `now`. A reminder with no future occurrence (e.g. a stale one-time
+/// reminder) sorts last; ties (including "no future occurrence" vs. "no future
+/// occurrence") break on id, so the order is stable from one call to the next.
+pub fn auto_sort_order(reminders: &[Reminder], now: NaiveDateTime) -> Vec<i64> {
+    let mut keyed: Vec<(Option<NaiveDateTime>, i64)> = reminders
+        .iter()
+        .map(|r| (next_occurrence_after(&r.recurrence, r.start_date, r.time_of_day, now), r.id))
+        .collect();
+    keyed.sort_by(|(a_due, a_id), (b_due, b_id)| match (a_due, b_due) {
+        (Some(a), Some(b)) => a.cmp(b).then(a_id.cmp(b_id)),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => a_id.cmp(b_id),
+    });
+    keyed.into_iter().map(|(_, id)| id).collect()
+}
+
+/// Recomputes and persists the auto-arrange order. Callers are responsible for checking
+/// `Store::auto_sort_enabled` first — this always (re)applies regardless of the setting.
+pub fn apply_auto_sort(store: &Store, now: NaiveDateTime) -> Result<()> {
+    let reminders = store.list_reminders()?;
+    let order = auto_sort_order(&reminders, now);
+    store.reorder_reminders(&order)
 }
 
 #[cfg(test)]
@@ -240,6 +266,81 @@ mod tests {
         let missed = run_missed_sweep(&store, at(2026, 3, 10, 9, 5)).unwrap();
         assert_eq!(missed, Vec::new());
         assert!(!store.get_reminder(id).unwrap().missed);
+    }
+
+    #[test]
+    fn auto_sort_order_ranks_by_next_occurrence_ascending() {
+        let store = Store::open_in_memory().unwrap();
+        let later = store
+            .insert_reminder(
+                &NewReminder {
+                    title: "Later today".into(),
+                    time_of_day: time(18, 0),
+                    recurrence: RecurrenceRule::Daily,
+                    start_date: date(2026, 3, 1),
+                },
+                at(2026, 3, 1, 0, 0),
+            )
+            .unwrap();
+        let sooner = store
+            .insert_reminder(
+                &NewReminder {
+                    title: "Sooner today".into(),
+                    time_of_day: time(9, 0),
+                    recurrence: RecurrenceRule::Daily,
+                    start_date: date(2026, 3, 1),
+                },
+                at(2026, 3, 1, 0, 0),
+            )
+            .unwrap();
+        let one_time_past = store
+            .insert_reminder(
+                &NewReminder {
+                    title: "Stale one-time".into(),
+                    time_of_day: time(9, 0),
+                    recurrence: RecurrenceRule::OneTime,
+                    start_date: date(2026, 2, 1),
+                },
+                at(2026, 2, 1, 0, 0),
+            )
+            .unwrap();
+
+        let reminders = store.list_reminders().unwrap();
+        // Midnight, so neither today's 9am nor 18:00 occurrence has passed yet.
+        let order = auto_sort_order(&reminders, at(2026, 3, 10, 0, 0));
+        assert_eq!(order, vec![sooner, later, one_time_past]);
+    }
+
+    #[test]
+    fn apply_auto_sort_persists_the_computed_order() {
+        let store = Store::open_in_memory().unwrap();
+        let later = store
+            .insert_reminder(
+                &NewReminder {
+                    title: "Later today".into(),
+                    time_of_day: time(18, 0),
+                    recurrence: RecurrenceRule::Daily,
+                    start_date: date(2026, 3, 1),
+                },
+                at(2026, 3, 1, 0, 0),
+            )
+            .unwrap();
+        let sooner = store
+            .insert_reminder(
+                &NewReminder {
+                    title: "Sooner today".into(),
+                    time_of_day: time(9, 0),
+                    recurrence: RecurrenceRule::Daily,
+                    start_date: date(2026, 3, 1),
+                },
+                at(2026, 3, 1, 0, 0),
+            )
+            .unwrap();
+
+        apply_auto_sort(&store, at(2026, 3, 10, 0, 0)).unwrap();
+
+        let ids: Vec<i64> = store.list_reminders().unwrap().iter().map(|r| r.id).collect();
+        assert_eq!(ids, vec![sooner, later]);
     }
 
     #[test]

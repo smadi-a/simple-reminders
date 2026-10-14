@@ -99,7 +99,8 @@ impl ReminderWindow {
         {
             let this = this.clone();
             settings_button.connect_clicked(move |_| {
-                settings_dialog::show_settings_dialog(&this.0.window, this.0.store.clone());
+                let this2 = this.clone();
+                settings_dialog::show_settings_dialog(&this.0.window, this.0.store.clone(), move || this2.refresh());
             });
         }
 
@@ -117,6 +118,15 @@ impl ReminderWindow {
         }
         if let Some(group) = self.0.reminders_group.borrow_mut().take() {
             self.0.content_box.remove(&group);
+        }
+
+        let auto_sort_enabled = self.0.store.auto_sort_enabled().unwrap_or(false);
+        if auto_sort_enabled {
+            // Reassessed on every launch/add/edit/removal, since those are exactly the
+            // moments `refresh()` is already called from.
+            if let Err(err) = scheduler::apply_auto_sort(&self.0.store, chrono::Local::now().naive_local()) {
+                eprintln!("failed to auto-sort reminders: {err}");
+            }
         }
 
         let reminders = match self.0.store.list_reminders() {
@@ -146,7 +156,7 @@ impl ReminderWindow {
         } else {
             let order: Rc<Vec<i64>> = Rc::new(normal.iter().map(|r| r.id).collect());
             for reminder in &normal {
-                group.add(&self.build_reminder_row(reminder, &order));
+                group.add(&self.build_reminder_row(reminder, &order, auto_sort_enabled));
             }
         }
         self.0.content_box.append(&group);
@@ -188,49 +198,54 @@ impl ReminderWindow {
         row
     }
 
-    fn build_reminder_row(&self, reminder: &Reminder, order: &Rc<Vec<i64>>) -> adw::ActionRow {
+    fn build_reminder_row(&self, reminder: &Reminder, order: &Rc<Vec<i64>>, auto_sort_enabled: bool) -> adw::ActionRow {
         let row = adw::ActionRow::builder()
             .title(&reminder.title)
             .subtitle(describe_recurrence(&reminder.recurrence, reminder.start_date, reminder.time_of_day))
             .build();
 
-        // Drag handle: only the handle itself is a drag source (not the whole row), so
-        // clicking the row still opens it for editing instead of starting a drag.
-        let handle = gtk::Image::from_icon_name("list-drag-handle-symbolic");
-        handle.set_tooltip_text(Some("Drag to reorder"));
-        handle.add_css_class("dim-label");
-        handle.set_cursor_from_name(Some("grab"));
+        // Manual drag-to-reorder only makes sense when the list's order isn't being
+        // recomputed out from under the user — auto-arrange and manual order are mutually
+        // exclusive, so skip the drag handle/source/target entirely while it's on.
+        if !auto_sort_enabled {
+            // Drag handle: only the handle itself is a drag source (not the whole row), so
+            // clicking the row still opens it for editing instead of starting a drag.
+            let handle = gtk::Image::from_icon_name("list-drag-handle-symbolic");
+            handle.set_tooltip_text(Some("Drag to reorder"));
+            handle.add_css_class("dim-label");
+            handle.set_cursor_from_name(Some("grab"));
 
-        let drag_source = gtk::DragSource::new();
-        drag_source.set_actions(gdk::DragAction::MOVE);
-        let dragged_id = reminder.id;
-        drag_source.connect_prepare(move |_, _, _| Some(gdk::ContentProvider::for_value(&dragged_id.to_value())));
-        handle.add_controller(drag_source);
+            let drag_source = gtk::DragSource::new();
+            drag_source.set_actions(gdk::DragAction::MOVE);
+            let dragged_id = reminder.id;
+            drag_source.connect_prepare(move |_, _, _| Some(gdk::ContentProvider::for_value(&dragged_id.to_value())));
+            handle.add_controller(drag_source);
 
-        // The drop target spans the whole row so releasing anywhere over it works; which
-        // half of the row the pointer is over decides "insert before" vs "insert after".
-        let drop_target = gtk::DropTarget::new(glib::types::Type::I64, gdk::DragAction::MOVE);
-        {
-            let this = self.clone();
-            let order = order.clone();
-            let target_id = reminder.id;
-            drop_target.connect_drop(move |drop_target, value, _x, y| {
-                let Ok(dragged_id) = value.get::<i64>() else {
-                    return false;
-                };
-                if dragged_id == target_id {
-                    return false;
-                }
-                let insert_after = drop_target
-                    .widget()
-                    .map(|widget| y > widget.height() as f64 / 2.0)
-                    .unwrap_or(false);
-                this.reorder_reminder(&order, dragged_id, target_id, insert_after);
-                true
-            });
+            // The drop target spans the whole row so releasing anywhere over it works; which
+            // half of the row the pointer is over decides "insert before" vs "insert after".
+            let drop_target = gtk::DropTarget::new(glib::types::Type::I64, gdk::DragAction::MOVE);
+            {
+                let this = self.clone();
+                let order = order.clone();
+                let target_id = reminder.id;
+                drop_target.connect_drop(move |drop_target, value, _x, y| {
+                    let Ok(dragged_id) = value.get::<i64>() else {
+                        return false;
+                    };
+                    if dragged_id == target_id {
+                        return false;
+                    }
+                    let insert_after = drop_target
+                        .widget()
+                        .map(|widget| y > widget.height() as f64 / 2.0)
+                        .unwrap_or(false);
+                    this.reorder_reminder(&order, dragged_id, target_id, insert_after);
+                    true
+                });
+            }
+            row.add_controller(drop_target);
+            row.add_prefix(&handle);
         }
-        row.add_controller(drop_target);
-        row.add_prefix(&handle);
 
         let edit_button = gtk::Button::from_icon_name("document-edit-symbolic");
         edit_button.set_valign(gtk::Align::Center);

@@ -40,6 +40,10 @@ CREATE TABLE IF NOT EXISTS settings (
 const DATE_FMT: &str = "%Y-%m-%d";
 const TIME_FMT: &str = "%H:%M";
 
+/// Settings key for the "auto-arrange by date/time" preference (see
+/// `scheduler::apply_auto_sort`). Stored as `"true"`/`"false"`; absent means disabled.
+const AUTO_SORT_SETTING_KEY: &str = "auto_sort_by_date";
+
 pub struct Store {
     conn: Connection,
 }
@@ -213,6 +217,14 @@ impl Store {
             params![key, value],
         )?;
         Ok(())
+    }
+
+    pub fn auto_sort_enabled(&self) -> Result<bool> {
+        Ok(self.get_setting(AUTO_SORT_SETTING_KEY)?.as_deref() == Some("true"))
+    }
+
+    pub fn set_auto_sort_enabled(&self, enabled: bool) -> Result<()> {
+        self.set_setting(AUTO_SORT_SETTING_KEY, if enabled { "true" } else { "false" })
     }
 }
 
@@ -406,6 +418,16 @@ mod tests {
             store.get_setting("notification_sound_path").unwrap(),
             Some("/usr/share/sounds/y.oga".to_string())
         );
+    }
+
+    #[test]
+    fn auto_sort_enabled_defaults_to_false_and_persists() {
+        let store = Store::open_in_memory().unwrap();
+        assert!(!store.auto_sort_enabled().unwrap());
+        store.set_auto_sort_enabled(true).unwrap();
+        assert!(store.auto_sort_enabled().unwrap());
+        store.set_auto_sort_enabled(false).unwrap();
+        assert!(!store.auto_sort_enabled().unwrap());
     }
 
     #[test]
