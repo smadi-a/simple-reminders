@@ -83,6 +83,7 @@ pub fn mark_done(store: &Store, reminder_id: i64) -> Result<()> {
         RecurrenceRule::Daily
         | RecurrenceRule::Weekdays
         | RecurrenceRule::Weekly { .. }
+        | RecurrenceRule::Fortnightly
         | RecurrenceRule::MonthlyOnDay { .. } => store.clear_missed(reminder_id),
     }
 }

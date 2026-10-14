@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS reminders (
     title TEXT NOT NULL,
     time_of_day TEXT NOT NULL,
     recurrence_type TEXT NOT NULL
-        CHECK(recurrence_type IN ('one_time','daily','weekdays','weekly','monthly')),
+        CHECK(recurrence_type IN ('one_time','daily','weekdays','weekly','fortnightly','monthly')),
     start_date TEXT NOT NULL,
     weekly_days TEXT,
     monthly_day INTEGER,
@@ -63,6 +63,7 @@ impl Store {
     fn from_connection(conn: Connection) -> Result<Self> {
         conn.execute_batch(SCHEMA)?;
         Self::ensure_sort_order_column(&conn)?;
+        Self::ensure_fortnightly_allowed(&conn)?;
         Ok(Self { conn })
     }
 
@@ -77,6 +78,49 @@ impl Store {
             conn.execute_batch(
                 "ALTER TABLE reminders ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;
                  UPDATE reminders SET sort_order = id;",
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Databases created before `fortnightly` was added have a `recurrence_type` CHECK
+    /// constraint that doesn't allow it. SQLite can't `ALTER TABLE` a CHECK constraint, so
+    /// rebuild the table under the current `SCHEMA` and copy the rows across when that's
+    /// the case (a no-op on a fresh database or one already rebuilt).
+    fn ensure_fortnightly_allowed(conn: &Connection) -> Result<()> {
+        let create_sql: Option<String> = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'reminders'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let needs_migration = matches!(&create_sql, Some(sql) if !sql.contains("fortnightly"));
+        if needs_migration {
+            conn.execute_batch(
+                "ALTER TABLE reminders RENAME TO reminders_old;
+                 CREATE TABLE reminders (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     title TEXT NOT NULL,
+                     time_of_day TEXT NOT NULL,
+                     recurrence_type TEXT NOT NULL
+                         CHECK(recurrence_type IN ('one_time','daily','weekdays','weekly','fortnightly','monthly')),
+                     start_date TEXT NOT NULL,
+                     weekly_days TEXT,
+                     monthly_day INTEGER,
+                     last_fired_due_instant TEXT,
+                     missed INTEGER NOT NULL DEFAULT 0,
+                     missed_due_instant TEXT,
+                     created_at TEXT NOT NULL,
+                     sort_order INTEGER NOT NULL DEFAULT 0
+                 );
+                 INSERT INTO reminders
+                     (id, title, time_of_day, recurrence_type, start_date, weekly_days, monthly_day,
+                      last_fired_due_instant, missed, missed_due_instant, created_at, sort_order)
+                 SELECT id, title, time_of_day, recurrence_type, start_date, weekly_days, monthly_day,
+                        last_fired_due_instant, missed, missed_due_instant, created_at, sort_order
+                 FROM reminders_old;
+                 DROP TABLE reminders_old;",
             )?;
         }
         Ok(())
@@ -232,7 +276,9 @@ fn encode_recurrence_extras(rule: &RecurrenceRule) -> (Option<String>, Option<u8
     match rule {
         RecurrenceRule::Weekly { days } => (Some(encode_weekdays(days)), None),
         RecurrenceRule::MonthlyOnDay { day } => (None, Some(*day)),
-        RecurrenceRule::OneTime | RecurrenceRule::Daily | RecurrenceRule::Weekdays => (None, None),
+        RecurrenceRule::OneTime | RecurrenceRule::Daily | RecurrenceRule::Weekdays | RecurrenceRule::Fortnightly => {
+            (None, None)
+        }
     }
 }
 
@@ -246,6 +292,7 @@ fn row_to_reminder(row: &Row) -> rusqlite::Result<Reminder> {
         "daily" => RecurrenceRule::Daily,
         "weekdays" => RecurrenceRule::Weekdays,
         "weekly" => RecurrenceRule::Weekly { days: decode_weekdays(weekly_days.as_deref().unwrap_or("")) },
+        "fortnightly" => RecurrenceRule::Fortnightly,
         "monthly" => RecurrenceRule::MonthlyOnDay { day: monthly_day.unwrap_or(1) as u8 },
         other => {
             return Err(rusqlite::Error::FromSqlConversionFailure(
@@ -336,6 +383,13 @@ mod tests {
         let rule = RecurrenceRule::Weekly { days: vec![Weekday::Tue, Weekday::Thu] };
         let id = store.insert_reminder(&sample(rule.clone()), created_at()).unwrap();
         assert_eq!(store.get_reminder(id).unwrap().recurrence, rule);
+    }
+
+    #[test]
+    fn insert_and_fetch_reminder_roundtrip_fortnightly() {
+        let store = Store::open_in_memory().unwrap();
+        let id = store.insert_reminder(&sample(RecurrenceRule::Fortnightly), created_at()).unwrap();
+        assert_eq!(store.get_reminder(id).unwrap().recurrence, RecurrenceRule::Fortnightly);
     }
 
     #[test]
@@ -434,6 +488,42 @@ mod tests {
     fn settings_last_seen_at_defaults_when_absent() {
         let store = Store::open_in_memory().unwrap();
         assert_eq!(store.get_setting("last_seen_at").unwrap(), None);
+    }
+
+    #[test]
+    fn opening_a_pre_fortnightly_database_migrates_and_preserves_rows() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE reminders (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 title TEXT NOT NULL,
+                 time_of_day TEXT NOT NULL,
+                 recurrence_type TEXT NOT NULL
+                     CHECK(recurrence_type IN ('one_time','daily','weekdays','weekly','monthly')),
+                 start_date TEXT NOT NULL,
+                 weekly_days TEXT,
+                 monthly_day INTEGER,
+                 last_fired_due_instant TEXT,
+                 missed INTEGER NOT NULL DEFAULT 0,
+                 missed_due_instant TEXT,
+                 created_at TEXT NOT NULL,
+                 sort_order INTEGER NOT NULL DEFAULT 0
+             );
+             INSERT INTO reminders
+                 (title, time_of_day, recurrence_type, start_date, created_at, sort_order)
+             VALUES ('Legacy row', '08:30', 'daily', '2026-03-10', '2026-03-01T00:00:00', 0);",
+        )
+        .unwrap();
+
+        let store = Store::from_connection(conn).unwrap();
+        let reminders = store.list_reminders().unwrap();
+        assert_eq!(reminders.len(), 1);
+        assert_eq!(reminders[0].title, "Legacy row");
+        assert_eq!(reminders[0].recurrence, RecurrenceRule::Daily);
+
+        // The migrated table's CHECK constraint now accepts 'fortnightly'.
+        let id = store.insert_reminder(&sample(RecurrenceRule::Fortnightly), created_at()).unwrap();
+        assert_eq!(store.get_reminder(id).unwrap().recurrence, RecurrenceRule::Fortnightly);
     }
 
     #[test]

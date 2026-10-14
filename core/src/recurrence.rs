@@ -85,6 +85,26 @@ pub fn next_occurrence_after(
             None
         }
 
+        RecurrenceRule::Fortnightly => {
+            // Jump close to `after` first (in 14-day steps from `start_date`) rather than
+            // walking one cycle at a time, so a start date from years ago doesn't exhaust
+            // `MAX_STEPS` before reaching the present.
+            let mut date = start_date;
+            if after.date() > start_date {
+                let days_since_start = (after.date() - start_date).num_days();
+                let periods = days_since_start / 14;
+                date = start_date + chrono::Duration::days(periods * 14);
+            }
+            for _ in 0..MAX_STEPS {
+                let candidate = date.and_time(time_of_day);
+                if candidate > after {
+                    return Some(candidate);
+                }
+                date = date.checked_add_signed(chrono::Duration::days(14))?;
+            }
+            None
+        }
+
         RecurrenceRule::MonthlyOnDay { day } => {
             let (mut year, mut month) = (start_date.year(), start_date.month());
             while (year, month) < (after.year(), after.month()) {
@@ -217,6 +237,43 @@ mod tests {
         // 2026-03-20 is a Friday (last selected day of that week); expect next Monday.
         let after = at(2026, 3, 20, 18, 0);
         assert_eq!(next_occurrence_after(&rule, start, t, after), Some(at(2026, 3, 23, 9, 0)));
+    }
+
+    #[test]
+    fn fortnightly_same_day_if_time_not_passed() {
+        let rule = RecurrenceRule::Fortnightly;
+        let start = date(2026, 3, 3); // a Tuesday
+        let t = time(18, 0);
+        let after = at(2026, 3, 17, 9, 0); // two cycles later, same weekday
+        assert_eq!(next_occurrence_after(&rule, start, t, after), Some(at(2026, 3, 17, 18, 0)));
+    }
+
+    #[test]
+    fn fortnightly_rolls_to_next_cycle_if_time_passed() {
+        let rule = RecurrenceRule::Fortnightly;
+        let start = date(2026, 3, 3);
+        let t = time(9, 0);
+        let after = at(2026, 3, 17, 18, 0);
+        assert_eq!(next_occurrence_after(&rule, start, t, after), Some(at(2026, 3, 31, 9, 0)));
+    }
+
+    #[test]
+    fn fortnightly_skips_the_off_week() {
+        let rule = RecurrenceRule::Fortnightly;
+        let start = date(2026, 3, 3);
+        let t = time(9, 0);
+        // 2026-03-10 is the Tuesday in between cycles; must not match.
+        let after = at(2026, 3, 4, 0, 0);
+        assert_eq!(next_occurrence_after(&rule, start, t, after), Some(at(2026, 3, 17, 9, 0)));
+    }
+
+    #[test]
+    fn fortnightly_before_start_date_returns_start_date() {
+        let rule = RecurrenceRule::Fortnightly;
+        let start = date(2026, 3, 3);
+        let t = time(9, 0);
+        let after = at(2026, 1, 1, 0, 0);
+        assert_eq!(next_occurrence_after(&rule, start, t, after), Some(at(2026, 3, 3, 9, 0)));
     }
 
     #[test]

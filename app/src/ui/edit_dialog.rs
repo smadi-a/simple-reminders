@@ -7,7 +7,7 @@ use chrono::{Datelike, NaiveDate, NaiveTime, Weekday};
 use simple_reminders_core::{NewReminder, RecurrenceRule, Reminder, Store};
 use std::rc::Rc;
 
-const RECURRENCE_LABELS: [&str; 5] = ["One-time", "Daily", "Weekdays", "Weekly", "Monthly"];
+const RECURRENCE_LABELS: [&str; 6] = ["One-time", "Daily", "Weekdays", "Weekly", "Fortnightly", "Monthly"];
 const WEEKDAY_ORDER: [(Weekday, &str); 7] = [
     (Weekday::Mon, "Mon"),
     (Weekday::Tue, "Tue"),
@@ -24,7 +24,8 @@ fn recurrence_index(rule: &RecurrenceRule) -> u32 {
         RecurrenceRule::Daily => 1,
         RecurrenceRule::Weekdays => 2,
         RecurrenceRule::Weekly { .. } => 3,
-        RecurrenceRule::MonthlyOnDay { .. } => 4,
+        RecurrenceRule::Fortnightly => 4,
+        RecurrenceRule::MonthlyOnDay { .. } => 5,
     }
 }
 
@@ -143,7 +144,7 @@ pub fn show_edit_dialog(
     monthly_row.add_suffix(&monthly_spin);
     let monthly_revealer = gtk::Revealer::new();
     monthly_revealer.set_child(Some(&monthly_row));
-    monthly_revealer.set_reveal_child(initial_recurrence_index == 4);
+    monthly_revealer.set_reveal_child(initial_recurrence_index == 5);
 
     {
         let weekly_revealer = weekly_revealer.clone();
@@ -151,7 +152,7 @@ pub fn show_edit_dialog(
         recurrence_row.connect_selected_notify(move |row| {
             let selected = row.selected();
             weekly_revealer.set_reveal_child(selected == 3);
-            monthly_revealer.set_reveal_child(selected == 4);
+            monthly_revealer.set_reveal_child(selected == 5);
         });
     }
 
@@ -245,6 +246,7 @@ pub fn show_edit_dialog(
                 }
                 RecurrenceRule::Weekly { days }
             }
+            4 => RecurrenceRule::Fortnightly,
             _ => RecurrenceRule::MonthlyOnDay { day: monthly_spin.value() as u8 },
         };
 

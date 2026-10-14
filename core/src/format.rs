@@ -31,6 +31,7 @@ pub fn describe_recurrence(recurrence: &RecurrenceRule, start_date: NaiveDate, t
                 .collect();
             format!("Weekly: {} at {t}", ordered.join(", "))
         }
+        RecurrenceRule::Fortnightly => format!("Every 2 weeks at {t}"),
         RecurrenceRule::MonthlyOnDay { day } => format!("Monthly on day {day} at {t}"),
     }
 }
@@ -70,6 +71,14 @@ mod tests {
     fn describes_weekly_in_week_order_regardless_of_input_order() {
         let rule = RecurrenceRule::Weekly { days: vec![Weekday::Fri, Weekday::Mon, Weekday::Wed] };
         assert_eq!(describe_recurrence(&rule, date(2026, 3, 10), time(18, 0)), "Weekly: Mon, Wed, Fri at 6:00 PM");
+    }
+
+    #[test]
+    fn describes_fortnightly() {
+        assert_eq!(
+            describe_recurrence(&RecurrenceRule::Fortnightly, date(2026, 3, 10), time(18, 0)),
+            "Every 2 weeks at 6:00 PM"
+        );
     }
 
     #[test]

@@ -1,13 +1,15 @@
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime, Weekday};
 
-/// The five recurrence options the app supports. Intentionally a closed set —
-/// see the project plan for why nothing else (yearly, custom intervals, etc.) is included.
+/// The recurrence options the app supports. Intentionally a closed set — see the project
+/// plan for why nothing else (yearly, custom intervals, etc.) is included.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RecurrenceRule {
     OneTime,
     Daily,
     Weekdays,
     Weekly { days: Vec<Weekday> },
+    /// Every 14 days starting from (and on the same weekday as) `start_date`.
+    Fortnightly,
     MonthlyOnDay { day: u8 },
 }
 
@@ -18,6 +20,7 @@ impl RecurrenceRule {
             RecurrenceRule::Daily => "daily",
             RecurrenceRule::Weekdays => "weekdays",
             RecurrenceRule::Weekly { .. } => "weekly",
+            RecurrenceRule::Fortnightly => "fortnightly",
             RecurrenceRule::MonthlyOnDay { .. } => "monthly",
         }
     }
