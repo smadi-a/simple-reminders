@@ -251,11 +251,13 @@ impl ReminderWindow {
         edit_button.set_valign(gtk::Align::Center);
         edit_button.add_css_class("flat");
         edit_button.set_tooltip_text(Some("Edit"));
+        edit_button.set_cursor_from_name(Some("pointer"));
 
         let delete_button = gtk::Button::from_icon_name("user-trash-symbolic");
         delete_button.set_valign(gtk::Align::Center);
         delete_button.add_css_class("flat");
         delete_button.set_tooltip_text(Some("Delete"));
+        delete_button.set_cursor_from_name(Some("pointer"));
 
         {
             let this = self.clone();
