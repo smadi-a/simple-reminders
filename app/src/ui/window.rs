@@ -52,8 +52,9 @@ impl ReminderWindow {
         let window = adw::ApplicationWindow::builder()
             .application(app)
             .title("Simple Reminders")
-            .default_width(480)
+            .default_width(520)
             .default_height(640)
+            .width_request(520)
             .content(&toolbar_view)
             .build();
 
