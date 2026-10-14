@@ -61,6 +61,11 @@ reporting success, don't just describe what should work.
 There is no separate lint/CI config in this repo currently; `cargo build` and `cargo test`
 are the verification bar.
 
+**Never launch the UI for visual verification, and never take or request a screenshot of
+the screen.** Do not run the built binary (GUI or `--background` mode) to "see" a change
+working. Verification is strictly limited to `cargo build`/`cargo build --release` and
+`cargo test`. Manual/visual testing of the running app is left entirely to the human coder.
+
 ## Git workflow
 
 **Never automatically `git add`/stage or `git commit` changes.** Staging and committing
