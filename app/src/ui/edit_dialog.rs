@@ -55,7 +55,7 @@ pub fn show_edit_dialog(
     let is_edit = existing.is_some();
     let today = chrono::Local::now().naive_local().date();
 
-    let title_row = adw::EntryRow::builder().title("Title").build();
+    let title_row = adw::EntryRow::builder().title("Title").activates_default(true).build();
     if let Some(r) = &existing {
         title_row.set_text(&r.title);
     }
@@ -91,9 +91,11 @@ pub fn show_edit_dialog(
     let hour_spin = gtk::SpinButton::with_range(0.0, 23.0, 1.0);
     hour_spin.set_value(initial_hour as f64);
     hour_spin.set_wrap(true);
+    hour_spin.set_activates_default(true);
     let minute_spin = gtk::SpinButton::with_range(0.0, 59.0, 1.0);
     minute_spin.set_value(initial_minute as f64);
     minute_spin.set_wrap(true);
+    minute_spin.set_activates_default(true);
 
     let time_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     time_box.append(&hour_spin);
@@ -136,6 +138,7 @@ pub fn show_edit_dialog(
     };
     let monthly_spin = gtk::SpinButton::with_range(1.0, 31.0, 1.0);
     monthly_spin.set_value(initial_monthly_day as f64);
+    monthly_spin.set_activates_default(true);
     let monthly_row = adw::ActionRow::builder().title("Day of month").build();
     monthly_row.add_suffix(&monthly_spin);
     let monthly_revealer = gtk::Revealer::new();
@@ -193,6 +196,7 @@ pub fn show_edit_dialog(
         .title(if is_edit { "Edit Reminder" } else { "Add Reminder" })
         .content_width(420)
         .child(&outer)
+        .default_widget(&save_button)
         .build();
 
     {
