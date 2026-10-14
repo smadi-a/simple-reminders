@@ -222,6 +222,15 @@ pub fn show_edit_dialog(
         let minute = minute_spin.value() as u32;
         let time_of_day = NaiveTime::from_hms_opt(hour, minute, 0).unwrap();
 
+        // Only one-time reminders fire at `start_date`/`time_of_day` itself; recurring
+        // rules treat it as an anchor and roll forward (see `recurrence::next_occurrence_after`),
+        // so a past anchor is normal for them and only one-time reminders need this check.
+        if recurrence_row.selected() == 0 && start_date.and_time(time_of_day) <= chrono::Local::now().naive_local() {
+            error_label.set_text("Pick a date and time in the future for a one-time reminder.");
+            error_label.set_visible(true);
+            return;
+        }
+
         let recurrence = match recurrence_row.selected() {
             0 => RecurrenceRule::OneTime,
             1 => RecurrenceRule::Daily,
