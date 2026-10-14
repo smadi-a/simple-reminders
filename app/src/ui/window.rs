@@ -5,9 +5,10 @@
 use crate::ui::edit_dialog;
 use crate::ui::settings_dialog;
 use gio::prelude::*;
+use gtk::gdk;
 use gtk::prelude::*;
 use adw::prelude::*;
-use simple_reminders_core::{format::describe_recurrence, scheduler, Reminder, Store};
+use simple_reminders_core::{format::describe_recurrence, model::move_id, scheduler, Reminder, Store};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -143,12 +144,24 @@ impl ReminderWindow {
             placeholder.set_sensitive(false);
             group.add(&placeholder);
         } else {
+            let order: Rc<Vec<i64>> = Rc::new(normal.iter().map(|r| r.id).collect());
             for reminder in &normal {
-                group.add(&self.build_reminder_row(reminder));
+                group.add(&self.build_reminder_row(reminder, &order));
             }
         }
         self.0.content_box.append(&group);
         *self.0.reminders_group.borrow_mut() = Some(group);
+    }
+
+    /// Applies a manual drag-to-reorder: moves `dragged_id` to just before/after
+    /// `target_id` (see `model::move_id`), persists the result, then rebuilds the UI from
+    /// the store (simplest way to reflect the new `ORDER BY sort_order` row order).
+    fn reorder_reminder(&self, order: &[i64], dragged_id: i64, target_id: i64, insert_after: bool) {
+        let new_order = move_id(order, dragged_id, target_id, insert_after);
+        if let Err(err) = self.0.store.reorder_reminders(&new_order) {
+            eprintln!("failed to reorder reminders: {err}");
+        }
+        self.refresh();
     }
 
     fn build_missed_row(&self, reminder: &Reminder) -> adw::ActionRow {
@@ -175,11 +188,49 @@ impl ReminderWindow {
         row
     }
 
-    fn build_reminder_row(&self, reminder: &Reminder) -> adw::ActionRow {
+    fn build_reminder_row(&self, reminder: &Reminder, order: &Rc<Vec<i64>>) -> adw::ActionRow {
         let row = adw::ActionRow::builder()
             .title(&reminder.title)
             .subtitle(describe_recurrence(&reminder.recurrence, reminder.start_date, reminder.time_of_day))
             .build();
+
+        // Drag handle: only the handle itself is a drag source (not the whole row), so
+        // clicking the row still opens it for editing instead of starting a drag.
+        let handle = gtk::Image::from_icon_name("list-drag-handle-symbolic");
+        handle.set_tooltip_text(Some("Drag to reorder"));
+        handle.add_css_class("dim-label");
+        handle.set_cursor_from_name(Some("grab"));
+
+        let drag_source = gtk::DragSource::new();
+        drag_source.set_actions(gdk::DragAction::MOVE);
+        let dragged_id = reminder.id;
+        drag_source.connect_prepare(move |_, _, _| Some(gdk::ContentProvider::for_value(&dragged_id.to_value())));
+        handle.add_controller(drag_source);
+
+        // The drop target spans the whole row so releasing anywhere over it works; which
+        // half of the row the pointer is over decides "insert before" vs "insert after".
+        let drop_target = gtk::DropTarget::new(glib::types::Type::I64, gdk::DragAction::MOVE);
+        {
+            let this = self.clone();
+            let order = order.clone();
+            let target_id = reminder.id;
+            drop_target.connect_drop(move |drop_target, value, _x, y| {
+                let Ok(dragged_id) = value.get::<i64>() else {
+                    return false;
+                };
+                if dragged_id == target_id {
+                    return false;
+                }
+                let insert_after = drop_target
+                    .widget()
+                    .map(|widget| y > widget.height() as f64 / 2.0)
+                    .unwrap_or(false);
+                this.reorder_reminder(&order, dragged_id, target_id, insert_after);
+                true
+            });
+        }
+        row.add_controller(drop_target);
+        row.add_prefix(&handle);
 
         let edit_button = gtk::Button::from_icon_name("document-edit-symbolic");
         edit_button.set_valign(gtk::Align::Center);

@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS reminders (
     last_fired_due_instant TEXT,
     missed INTEGER NOT NULL DEFAULT 0,
     missed_due_instant TEXT,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS settings (
@@ -57,7 +58,24 @@ impl Store {
 
     fn from_connection(conn: Connection) -> Result<Self> {
         conn.execute_batch(SCHEMA)?;
+        Self::ensure_sort_order_column(&conn)?;
         Ok(Self { conn })
+    }
+
+    /// Databases created before manual reordering existed won't have `sort_order` —
+    /// `CREATE TABLE IF NOT EXISTS` above doesn't retrofit columns onto an existing table,
+    /// so add it here and backfill by `id` (i.e. original creation order).
+    fn ensure_sort_order_column(conn: &Connection) -> Result<()> {
+        let has_column = conn
+            .prepare("SELECT 1 FROM pragma_table_info('reminders') WHERE name = 'sort_order'")?
+            .exists([])?;
+        if !has_column {
+            conn.execute_batch(
+                "ALTER TABLE reminders ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;
+                 UPDATE reminders SET sort_order = id;",
+            )?;
+        }
+        Ok(())
     }
 
     /// `now` is passed in explicitly (rather than read from the real clock here) so the
@@ -65,11 +83,16 @@ impl Store {
     /// Callers pass `chrono::Local::now().naive_local()` in real use.
     pub fn insert_reminder(&self, new: &NewReminder, now: NaiveDateTime) -> Result<i64> {
         let (weekly_days, monthly_day) = encode_recurrence_extras(&new.recurrence);
+        let next_order: i64 = self.conn.query_row(
+            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM reminders",
+            [],
+            |row| row.get(0),
+        )?;
         self.conn.execute(
             "INSERT INTO reminders
                 (title, time_of_day, recurrence_type, start_date, weekly_days, monthly_day,
-                 last_fired_due_instant, missed, missed_due_instant, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, 0, NULL, ?7)",
+                 last_fired_due_instant, missed, missed_due_instant, created_at, sort_order)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, 0, NULL, ?7, ?8)",
             params![
                 new.title,
                 new.time_of_day.format(TIME_FMT).to_string(),
@@ -78,6 +101,7 @@ impl Store {
                 weekly_days,
                 monthly_day,
                 format_datetime(now),
+                next_order,
             ],
         )?;
         Ok(self.conn.last_insert_rowid())
@@ -128,10 +152,25 @@ impl Store {
         let mut stmt = self.conn.prepare(
             "SELECT id, title, time_of_day, recurrence_type, start_date, weekly_days,
                     monthly_day, last_fired_due_instant, missed, missed_due_instant, created_at
-             FROM reminders ORDER BY id",
+             FROM reminders ORDER BY sort_order, id",
         )?;
         let rows = stmt.query_map([], row_to_reminder)?;
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Error::from)
+    }
+
+    /// Persists a manual drag-to-reorder: `ordered_ids` must list every reminder's id in
+    /// its new display order. Reminders not present are left with whatever `sort_order`
+    /// they already had (callers always pass the full list in practice).
+    pub fn reorder_reminders(&self, ordered_ids: &[i64]) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        for (index, id) in ordered_ids.iter().enumerate() {
+            tx.execute(
+                "UPDATE reminders SET sort_order = ?1 WHERE id = ?2",
+                params![index as i64, id],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     pub fn set_last_fired(&self, id: i64, instant: NaiveDateTime) -> Result<()> {
@@ -328,6 +367,28 @@ mod tests {
         store.insert_reminder(&sample(RecurrenceRule::OneTime), created_at()).unwrap();
         store.insert_reminder(&sample(RecurrenceRule::Daily), created_at()).unwrap();
         assert_eq!(store.list_reminders().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn list_reminders_orders_new_ones_last() {
+        let store = Store::open_in_memory().unwrap();
+        let first = store.insert_reminder(&sample(RecurrenceRule::OneTime), created_at()).unwrap();
+        let second = store.insert_reminder(&sample(RecurrenceRule::Daily), created_at()).unwrap();
+        let ids: Vec<i64> = store.list_reminders().unwrap().iter().map(|r| r.id).collect();
+        assert_eq!(ids, vec![first, second]);
+    }
+
+    #[test]
+    fn reorder_reminders_persists_new_order() {
+        let store = Store::open_in_memory().unwrap();
+        let first = store.insert_reminder(&sample(RecurrenceRule::OneTime), created_at()).unwrap();
+        let second = store.insert_reminder(&sample(RecurrenceRule::Daily), created_at()).unwrap();
+        let third = store.insert_reminder(&sample(RecurrenceRule::Weekdays), created_at()).unwrap();
+
+        store.reorder_reminders(&[third, first, second]).unwrap();
+
+        let ids: Vec<i64> = store.list_reminders().unwrap().iter().map(|r| r.id).collect();
+        assert_eq!(ids, vec![third, first, second]);
     }
 
     #[test]

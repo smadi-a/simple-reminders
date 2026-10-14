@@ -107,6 +107,18 @@ pub fn decode_weekdays(encoded: &str) -> Vec<Weekday> {
         .collect()
 }
 
+/// The index math behind manual drag-to-reorder: returns `order` with `dragged_id` moved
+/// to just before/after `target_id`. Kept pure and GTK-free here so it's unit-testable
+/// without a UI harness — the UI only supplies the current on-screen order and the drop
+/// location, then persists whatever this returns via `Store::reorder_reminders`.
+pub fn move_id(order: &[i64], dragged_id: i64, target_id: i64, insert_after: bool) -> Vec<i64> {
+    let mut new_order: Vec<i64> = order.iter().copied().filter(|&id| id != dragged_id).collect();
+    let target_pos = new_order.iter().position(|&id| id == target_id).unwrap_or(new_order.len());
+    let insert_at = if insert_after { target_pos + 1 } else { target_pos };
+    new_order.insert(insert_at, dragged_id);
+    new_order
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -123,5 +135,25 @@ mod tests {
     fn decode_weekdays_ignores_blank_and_unknown_tokens() {
         assert_eq!(decode_weekdays(""), Vec::<Weekday>::new());
         assert_eq!(decode_weekdays("MON,,BOGUS,FRI"), vec![Weekday::Mon, Weekday::Fri]);
+    }
+
+    #[test]
+    fn move_id_inserts_before_target() {
+        assert_eq!(move_id(&[1, 2, 3], 3, 1, false), vec![3, 1, 2]);
+    }
+
+    #[test]
+    fn move_id_inserts_after_target() {
+        assert_eq!(move_id(&[1, 2, 3], 1, 3, true), vec![2, 3, 1]);
+    }
+
+    #[test]
+    fn move_id_within_adjacent_positions_is_a_no_op_shape() {
+        assert_eq!(move_id(&[1, 2, 3], 2, 1, true), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn move_id_appends_when_target_missing() {
+        assert_eq!(move_id(&[1, 2, 3], 1, 99, false), vec![2, 3, 1]);
     }
 }
