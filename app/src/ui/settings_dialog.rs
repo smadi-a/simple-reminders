@@ -19,6 +19,9 @@ pub fn show_settings_dialog(
 ) {
     let dialog = adw::PreferencesDialog::new();
     let page = adw::PreferencesPage::new();
+    // Keep the dialog auto-sizing to its content, but enforce a minimum height so it
+    // doesn't feel cramped when there are few rows.
+    page.set_size_request(-1, 300);
 
     let arrangement_group = adw::PreferencesGroup::builder().title("Arrangement").build();
     let auto_sort_row = adw::SwitchRow::builder()
