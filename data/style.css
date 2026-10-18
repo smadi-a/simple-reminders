@@ -6,3 +6,12 @@ row.missed-reminder {
 row.missed-reminder title {
   color: #8b0000;
 }
+
+/* Snoozed-reminder rows shown in red while waiting for the snooze timer to re-fire. */
+row.snoozed-reminder {
+  color: #c01c28;
+}
+
+row.snoozed-reminder title {
+  color: #c01c28;
+}

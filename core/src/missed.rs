@@ -64,6 +64,7 @@ mod tests {
             last_fired_due_instant: None,
             missed: false,
             missed_due_instant: None,
+            snoozed_until: None,
             created_at: start_date.and_time(time_of_day),
         }
     }

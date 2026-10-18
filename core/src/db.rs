@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS reminders (
     last_fired_due_instant TEXT,
     missed INTEGER NOT NULL DEFAULT 0,
     missed_due_instant TEXT,
+    snoozed_until TEXT,
     created_at TEXT NOT NULL,
     sort_order INTEGER NOT NULL DEFAULT 0
 );
@@ -71,6 +72,7 @@ impl Store {
         conn.execute_batch(SCHEMA)?;
         Self::ensure_sort_order_column(&conn)?;
         Self::ensure_fortnightly_allowed(&conn)?;
+        Self::ensure_snoozed_until_column(&conn)?;
         Ok(Self { conn })
     }
 
@@ -86,6 +88,19 @@ impl Store {
                 "ALTER TABLE reminders ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;
                  UPDATE reminders SET sort_order = id;",
             )?;
+        }
+        Ok(())
+    }
+
+    /// Databases created before notification snoozing existed won't have `snoozed_until` —
+    /// same retrofit approach as `ensure_sort_order_column` above (no CHECK constraint is
+    /// involved, so a plain `ALTER TABLE ADD COLUMN` suffices here).
+    fn ensure_snoozed_until_column(conn: &Connection) -> Result<()> {
+        let has_column = conn
+            .prepare("SELECT 1 FROM pragma_table_info('reminders') WHERE name = 'snoozed_until'")?
+            .exists([])?;
+        if !has_column {
+            conn.execute_batch("ALTER TABLE reminders ADD COLUMN snoozed_until TEXT;")?;
         }
         Ok(())
     }
@@ -194,7 +209,8 @@ impl Store {
         self.conn
             .query_row(
                 "SELECT id, title, time_of_day, recurrence_type, start_date, weekly_days,
-                        monthly_day, last_fired_due_instant, missed, missed_due_instant, created_at
+                        monthly_day, last_fired_due_instant, missed, missed_due_instant,
+                        created_at, snoozed_until
                  FROM reminders WHERE id = ?1",
                 params![id],
                 row_to_reminder,
@@ -206,7 +222,8 @@ impl Store {
     pub fn list_reminders(&self) -> Result<Vec<Reminder>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, title, time_of_day, recurrence_type, start_date, weekly_days,
-                    monthly_day, last_fired_due_instant, missed, missed_due_instant, created_at
+                    monthly_day, last_fired_due_instant, missed, missed_due_instant,
+                    created_at, snoozed_until
              FROM reminders ORDER BY sort_order, id",
         )?;
         let rows = stmt.query_map([], row_to_reminder)?;
@@ -249,6 +266,19 @@ impl Store {
             "UPDATE reminders SET missed = 0, missed_due_instant = NULL WHERE id = ?1",
             params![id],
         )?;
+        Ok(())
+    }
+
+    pub fn set_snoozed(&self, id: i64, until: NaiveDateTime) -> Result<()> {
+        self.conn.execute(
+            "UPDATE reminders SET snoozed_until = ?1 WHERE id = ?2",
+            params![format_datetime(until), id],
+        )?;
+        Ok(())
+    }
+
+    pub fn clear_snoozed(&self, id: i64) -> Result<()> {
+        self.conn.execute("UPDATE reminders SET snoozed_until = NULL WHERE id = ?1", params![id])?;
         Ok(())
     }
 
@@ -331,6 +361,7 @@ fn row_to_reminder(row: &Row) -> rusqlite::Result<Reminder> {
     let last_fired_due_instant: Option<String> = row.get(7)?;
     let missed_due_instant: Option<String> = row.get(9)?;
     let created_at: String = row.get(10)?;
+    let snoozed_until: Option<String> = row.get(11)?;
 
     Ok(Reminder {
         id: row.get(0)?,
@@ -345,6 +376,7 @@ fn row_to_reminder(row: &Row) -> rusqlite::Result<Reminder> {
         missed: row.get::<_, i64>(8)? != 0,
         missed_due_instant: missed_due_instant.map(|s| parse_datetime_col(&s, 9)).transpose()?,
         created_at: parse_datetime_col(&created_at, 10)?,
+        snoozed_until: snoozed_until.map(|s| parse_datetime_col(&s, 11)).transpose()?,
     })
 }
 
@@ -580,5 +612,19 @@ mod tests {
         let fetched = store.get_reminder(id).unwrap();
         assert!(!fetched.missed);
         assert!(fetched.missed_due_instant.is_none());
+    }
+
+    #[test]
+    fn snoozed_until_set_and_cleared() {
+        let store = Store::open_in_memory().unwrap();
+        let id = store.insert_reminder(&sample(RecurrenceRule::Daily), created_at()).unwrap();
+        assert!(store.get_reminder(id).unwrap().snoozed_until.is_none());
+
+        let until = created_at() + chrono::Duration::minutes(5);
+        store.set_snoozed(id, until).unwrap();
+        assert_eq!(store.get_reminder(id).unwrap().snoozed_until, Some(until));
+
+        store.clear_snoozed(id).unwrap();
+        assert!(store.get_reminder(id).unwrap().snoozed_until.is_none());
     }
 }

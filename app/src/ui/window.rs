@@ -204,15 +204,17 @@ impl ReminderWindow {
     }
 
     fn build_reminder_row(&self, reminder: &Reminder, order: &Rc<Vec<i64>>, auto_sort_enabled: bool) -> adw::ActionRow {
+        let now = chrono::Local::now().naive_local();
+        let is_snoozed = reminder.snoozed_until.is_some_and(|until| until > now);
+
+        let title = if is_snoozed { format!("{} (snoozed)", reminder.title) } else { reminder.title.clone() };
         let row = adw::ActionRow::builder()
-            .title(&reminder.title)
-            .subtitle(describe_recurrence(
-                &reminder.recurrence,
-                reminder.start_date,
-                reminder.time_of_day,
-                chrono::Local::now().naive_local().date(),
-            ))
+            .title(title)
+            .subtitle(describe_recurrence(&reminder.recurrence, reminder.start_date, reminder.time_of_day, now.date()))
             .build();
+        if is_snoozed {
+            row.add_css_class("snoozed-reminder");
+        }
 
         // Manual drag-to-reorder only makes sense when the list's order isn't being
         // recomputed out from under the user — auto-arrange and manual order are mutually

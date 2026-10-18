@@ -126,12 +126,13 @@ fn register_reminder_done_action(app: &adw::Application, state: AppState) {
     app.add_action(&action);
 }
 
-/// Registers the "Snooze" notification action: withdraws the current notification and,
-/// after the configured delay, re-sends it (same notification id, since it's derived from
-/// the reminder id and due instant, which don't change) so the "Done" button still resolves
-/// to the right occurrence. Re-reads the reminder from the store when the delay elapses
-/// rather than capturing its title now, so a snooze outlives edits or deletion made to the
-/// reminder in the meantime.
+/// Registers the "Snooze" notification action: withdraws the current notification, marks
+/// the reminder `snoozed_until` (so the main window can show it as snoozed in the
+/// meantime), and after the configured delay re-sends it (same notification id, since it's
+/// derived from the reminder id and due instant, which don't change) so the "Done" button
+/// still resolves to the right occurrence. Re-reads the reminder from the store when the
+/// delay elapses rather than capturing its title now, so a snooze outlives edits or
+/// deletion made to the reminder in the meantime.
 fn register_reminder_snooze_action(app: &adw::Application, state: AppState) {
     let action = gio::SimpleAction::new("reminder-snooze", Some(glib::VariantTy::STRING));
     let app_for_action = app.clone();
@@ -145,14 +146,28 @@ fn register_reminder_snooze_action(app: &adw::Application, state: AppState) {
         app_for_action.withdraw_notification(&notification_id);
 
         let snooze_minutes = state.store.snooze_minutes().unwrap_or(5).max(1);
+        let snoozed_until = chrono::Local::now().naive_local() + chrono::Duration::minutes(snooze_minutes);
+        if let Err(err) = state.store.set_snoozed(reminder_id, snoozed_until) {
+            eprintln!("failed to mark reminder {reminder_id} snoozed: {err}");
+        }
+        if let Some(window) = state.window.borrow().as_ref() {
+            window.refresh();
+        }
+
         let app = app_for_action.clone();
         let state = state.clone();
         glib::source::timeout_add_seconds_local(u32::try_from(snooze_minutes * 60).unwrap_or(u32::MAX), move || {
+            if let Err(err) = state.store.clear_snoozed(reminder_id) {
+                eprintln!("failed to clear snoozed state for reminder {reminder_id}: {err}");
+            }
             if let Ok(reminder) = state.store.get_reminder(reminder_id) {
                 send_reminder_notification(&app, reminder_id, &reminder.title, due_instant);
                 if let Some(sound_path) = sound_setting(&state.store) {
                     play_sound(&sound_path);
                 }
+            }
+            if let Some(window) = state.window.borrow().as_ref() {
+                window.refresh();
             }
             glib::ControlFlow::Break
         });

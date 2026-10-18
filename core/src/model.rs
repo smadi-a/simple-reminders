@@ -44,6 +44,11 @@ pub struct Reminder {
     pub last_fired_due_instant: Option<NaiveDateTime>,
     pub missed: bool,
     pub missed_due_instant: Option<NaiveDateTime>,
+    /// Set while a notification's "Snooze" action is waiting to re-fire; cleared when that
+    /// timer elapses (or the resend otherwise happens). A value in the past just means the
+    /// snooze window already elapsed — callers compare against "now" rather than treating
+    /// presence alone as "currently snoozed".
+    pub snoozed_until: Option<NaiveDateTime>,
     pub created_at: NaiveDateTime,
 }
 
