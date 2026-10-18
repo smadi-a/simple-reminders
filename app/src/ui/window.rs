@@ -177,7 +177,12 @@ impl ReminderWindow {
     fn build_missed_row(&self, reminder: &Reminder) -> adw::ActionRow {
         let row = adw::ActionRow::builder()
             .title(&reminder.title)
-            .subtitle(describe_recurrence(&reminder.recurrence, reminder.start_date, reminder.time_of_day))
+            .subtitle(describe_recurrence(
+                &reminder.recurrence,
+                reminder.start_date,
+                reminder.time_of_day,
+                chrono::Local::now().naive_local().date(),
+            ))
             .build();
         row.add_css_class("missed-reminder");
 
@@ -201,7 +206,12 @@ impl ReminderWindow {
     fn build_reminder_row(&self, reminder: &Reminder, order: &Rc<Vec<i64>>, auto_sort_enabled: bool) -> adw::ActionRow {
         let row = adw::ActionRow::builder()
             .title(&reminder.title)
-            .subtitle(describe_recurrence(&reminder.recurrence, reminder.start_date, reminder.time_of_day))
+            .subtitle(describe_recurrence(
+                &reminder.recurrence,
+                reminder.start_date,
+                reminder.time_of_day,
+                chrono::Local::now().naive_local().date(),
+            ))
             .build();
 
         // Manual drag-to-reorder only makes sense when the list's order isn't being
