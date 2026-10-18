@@ -44,6 +44,13 @@ const TIME_FMT: &str = "%H:%M";
 /// `scheduler::apply_auto_sort`). Stored as `"true"`/`"false"`; absent means disabled.
 const AUTO_SORT_SETTING_KEY: &str = "auto_sort_by_date";
 
+/// Settings key for how long a snoozed notification waits before re-firing. Stored as a
+/// plain integer string of minutes; absent means `DEFAULT_SNOOZE_MINUTES`.
+const SNOOZE_MINUTES_SETTING_KEY: &str = "snooze_minutes";
+const DEFAULT_SNOOZE_MINUTES: i64 = 5;
+pub const MIN_SNOOZE_MINUTES: i64 = 1;
+pub const MAX_SNOOZE_MINUTES: i64 = 24 * 60;
+
 pub struct Store {
     conn: Connection,
 }
@@ -270,6 +277,22 @@ impl Store {
     pub fn set_auto_sort_enabled(&self, enabled: bool) -> Result<()> {
         self.set_setting(AUTO_SORT_SETTING_KEY, if enabled { "true" } else { "false" })
     }
+
+    /// Minutes a snoozed notification waits before re-firing. Always within
+    /// `[MIN_SNOOZE_MINUTES, MAX_SNOOZE_MINUTES]` — a value stored outside that range (e.g.
+    /// by a future downgrade/upgrade mismatch) is clamped rather than trusted verbatim.
+    pub fn snooze_minutes(&self) -> Result<i64> {
+        Ok(self
+            .get_setting(SNOOZE_MINUTES_SETTING_KEY)?
+            .and_then(|s| s.parse::<i64>().ok())
+            .map(|minutes| minutes.clamp(MIN_SNOOZE_MINUTES, MAX_SNOOZE_MINUTES))
+            .unwrap_or(DEFAULT_SNOOZE_MINUTES))
+    }
+
+    pub fn set_snooze_minutes(&self, minutes: i64) -> Result<()> {
+        let clamped = minutes.clamp(MIN_SNOOZE_MINUTES, MAX_SNOOZE_MINUTES);
+        self.set_setting(SNOOZE_MINUTES_SETTING_KEY, &clamped.to_string())
+    }
 }
 
 fn encode_recurrence_extras(rule: &RecurrenceRule) -> (Option<String>, Option<u8>) {
@@ -482,6 +505,23 @@ mod tests {
         assert!(store.auto_sort_enabled().unwrap());
         store.set_auto_sort_enabled(false).unwrap();
         assert!(!store.auto_sort_enabled().unwrap());
+    }
+
+    #[test]
+    fn snooze_minutes_defaults_and_persists() {
+        let store = Store::open_in_memory().unwrap();
+        assert_eq!(store.snooze_minutes().unwrap(), 5);
+        store.set_snooze_minutes(15).unwrap();
+        assert_eq!(store.snooze_minutes().unwrap(), 15);
+    }
+
+    #[test]
+    fn snooze_minutes_clamps_to_valid_range() {
+        let store = Store::open_in_memory().unwrap();
+        store.set_snooze_minutes(0).unwrap();
+        assert_eq!(store.snooze_minutes().unwrap(), 1);
+        store.set_snooze_minutes(10_000).unwrap();
+        assert_eq!(store.snooze_minutes().unwrap(), 24 * 60);
     }
 
     #[test]

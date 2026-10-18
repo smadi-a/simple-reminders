@@ -33,6 +33,7 @@ pub fn send_reminder_notification(app: &impl IsA<gio::Application>, reminder_id:
     let notification = gio::Notification::new(title);
     notification.set_body(Some(&format!("Scheduled for {}", due_instant.format("%-I:%M %p"))));
     notification.set_priority(gio::NotificationPriority::Urgent);
+    notification.add_button_with_target_value("Snooze", "app.reminder-snooze", Some(&id.to_variant()));
     notification.add_button_with_target_value("Done", "app.reminder-done", Some(&id.to_variant()));
     app.send_notification(Some(&id), &notification);
     id

@@ -57,6 +57,7 @@ pub fn build_application() -> adw::Application {
         }
 
         register_reminder_done_action(app, state.clone());
+        register_reminder_snooze_action(app, state.clone());
         start_poll_timer(app.clone(), state.clone());
 
         let activate_state = state.clone();
@@ -121,6 +122,40 @@ fn register_reminder_done_action(app: &adw::Application, state: AppState) {
         if let Some(window) = state.window.borrow().as_ref() {
             window.refresh();
         }
+    });
+    app.add_action(&action);
+}
+
+/// Registers the "Snooze" notification action: withdraws the current notification and,
+/// after the configured delay, re-sends it (same notification id, since it's derived from
+/// the reminder id and due instant, which don't change) so the "Done" button still resolves
+/// to the right occurrence. Re-reads the reminder from the store when the delay elapses
+/// rather than capturing its title now, so a snooze outlives edits or deletion made to the
+/// reminder in the meantime.
+fn register_reminder_snooze_action(app: &adw::Application, state: AppState) {
+    let action = gio::SimpleAction::new("reminder-snooze", Some(glib::VariantTy::STRING));
+    let app_for_action = app.clone();
+    action.connect_activate(move |_action, parameter| {
+        let Some(notification_id) = parameter.and_then(|v| v.str().map(str::to_owned)) else {
+            return;
+        };
+        let Some((reminder_id, due_instant)) = parse_notification_id(&notification_id) else {
+            return;
+        };
+        app_for_action.withdraw_notification(&notification_id);
+
+        let snooze_minutes = state.store.snooze_minutes().unwrap_or(5).max(1);
+        let app = app_for_action.clone();
+        let state = state.clone();
+        glib::source::timeout_add_seconds_local(u32::try_from(snooze_minutes * 60).unwrap_or(u32::MAX), move || {
+            if let Ok(reminder) = state.store.get_reminder(reminder_id) {
+                send_reminder_notification(&app, reminder_id, &reminder.title, due_instant);
+                if let Some(sound_path) = sound_setting(&state.store) {
+                    play_sound(&sound_path);
+                }
+            }
+            glib::ControlFlow::Break
+        });
     });
     app.add_action(&action);
 }

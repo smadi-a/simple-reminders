@@ -5,6 +5,7 @@
 use crate::audio::play_sound;
 use gtk::prelude::*;
 use adw::prelude::*;
+use simple_reminders_core::db::{MAX_SNOOZE_MINUTES, MIN_SNOOZE_MINUTES};
 use simple_reminders_core::sound::{default_sound_dirs, discover_system_sounds_in};
 use simple_reminders_core::{scheduler, Store};
 use std::rc::Rc;
@@ -111,6 +112,23 @@ pub fn show_settings_dialog(
     }
 
     page.add(&group);
+
+    let snooze_group = adw::PreferencesGroup::builder().title("Snooze").build();
+    let snooze_row = adw::SpinRow::with_range(MIN_SNOOZE_MINUTES as f64, MAX_SNOOZE_MINUTES as f64, 1.0);
+    snooze_row.set_title("Snooze Duration");
+    snooze_row.set_subtitle("Minutes to wait before re-notifying (1 minute to 24 hours)");
+    snooze_row.set_value(store.snooze_minutes().unwrap_or(5) as f64);
+    {
+        let store = store.clone();
+        snooze_row.connect_value_notify(move |row| {
+            if let Err(err) = store.set_snooze_minutes(row.value() as i64) {
+                eprintln!("failed to save snooze duration setting: {err}");
+            }
+        });
+    }
+    snooze_group.add(&snooze_row);
+    page.add(&snooze_group);
+
     dialog.add(&page);
     dialog.present(Some(parent));
 }
