@@ -176,7 +176,7 @@ impl ReminderWindow {
 
     fn build_missed_row(&self, reminder: &Reminder) -> adw::ActionRow {
         let row = adw::ActionRow::builder()
-            .title(&reminder.title)
+            .title(glib::markup_escape_text(&reminder.title))
             .subtitle(describe_recurrence(
                 &reminder.recurrence,
                 reminder.start_date,
@@ -207,7 +207,8 @@ impl ReminderWindow {
         let now = chrono::Local::now().naive_local();
         let is_snoozed = reminder.snoozed_until.is_some_and(|until| until > now);
 
-        let title = if is_snoozed { format!("{} (snoozed)", reminder.title) } else { reminder.title.clone() };
+        let escaped_title = glib::markup_escape_text(&reminder.title);
+        let title = if is_snoozed { format!("{escaped_title} (snoozed)") } else { escaped_title.to_string() };
         let row = adw::ActionRow::builder()
             .title(title)
             .subtitle(describe_recurrence(&reminder.recurrence, reminder.start_date, reminder.time_of_day, now.date()))
